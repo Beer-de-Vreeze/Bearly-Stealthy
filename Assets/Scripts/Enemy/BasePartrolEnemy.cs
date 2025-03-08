@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.AI;
@@ -6,12 +7,8 @@ using VInspector;
 
 [RequireComponent(typeof(NavMeshAgent))]
 [RequireComponent(typeof(Rigidbody))]
-public class BasePatrolEnemy : MonoBehaviour
+public class BasePatrolEnemy : BaseEnemy
 {
-    [Tab("Movement")]
-    [SerializeField]
-    private float _speed = 2f;
-
     [Tab("Patrol")]
     [SerializeField]
     private Transform[] _patrolPoints;
@@ -31,55 +28,55 @@ public class BasePatrolEnemy : MonoBehaviour
     private int _currentPointIndex = 0;
     private bool _isReversing = false;
     private float _waitCounter;
-    private Transform _patrolPointsParent;
-    private Rigidbody _rb;
-    private NavMeshAgent _agent;
 
-    private void Start()
+    protected override void Start()
     {
-        _agent = GetComponent<NavMeshAgent>();
-        _rb = GetComponent<Rigidbody>();
-        _rb.isKinematic = true;
-        _agent.speed = _speed;
-
+        base.Start();
         if (_patrolPoints.Length > 0)
         {
-            _agent.SetDestination(_patrolPoints[_currentPointIndex].position);
+            Agent.SetDestination(_patrolPoints[_currentPointIndex].position);
         }
         _waitCounter = _startWaitTime;
     }
 
     private void FixedUpdate()
     {
-        if (_waitCounter > 0)
+        if (
+            !IsPlayerSpotted
+            && _currentState != EnemyState.Wandering
+            && _currentState != EnemyState.Investigating
+        )
         {
-            _waitCounter -= Time.deltaTime;
-            return;
-        }
+            if (_waitCounter > 0)
+            {
+                _waitCounter -= Time.deltaTime;
+                return;
+            }
 
-        if (_patrolLoop)
-        {
-            PatrolLoopMethod();
-        }
-        else
-        {
-            PatrolBackAndForth();
+            if (_patrolLoop)
+            {
+                PatrolLoopMethod();
+            }
+            else
+            {
+                PatrolBackAndForth();
+            }
         }
     }
 
     private void PatrolLoopMethod()
     {
-        if (!_agent.pathPending && _agent.remainingDistance < 0.2f)
+        if (!Agent.pathPending && Agent.remainingDistance < 0.2f)
         {
             _currentPointIndex = (_currentPointIndex + 1) % _patrolPoints.Length;
-            _agent.SetDestination(_patrolPoints[_currentPointIndex].position);
+            Agent.SetDestination(_patrolPoints[_currentPointIndex].position);
             _waitCounter = _waitTime;
         }
     }
 
     private void PatrolBackAndForth()
     {
-        if (!_agent.pathPending && _agent.remainingDistance < 0.2f)
+        if (!Agent.pathPending && Agent.remainingDistance < 0.2f)
         {
             if (_currentPointIndex == 0)
             {
@@ -91,15 +88,87 @@ public class BasePatrolEnemy : MonoBehaviour
             }
 
             _currentPointIndex = _isReversing ? _currentPointIndex - 1 : _currentPointIndex + 1;
-            _agent.SetDestination(_patrolPoints[_currentPointIndex].position);
+            Agent.SetDestination(_patrolPoints[_currentPointIndex].position);
             _waitCounter = _waitTime;
+        }
+    }
+
+    protected override IEnumerator OnPlayerSpotted()
+    {
+        // Stop any current wandering
+        StopWandering();
+
+        yield return base.OnPlayerSpotted();
+
+        IsPlayerSpotted = true;
+
+        // Chase after the player if the player is spotted
+        while (Vector3.Distance(transform.position, Player.transform.position) > 1f)
+        {
+            Agent.SetDestination(Player.transform.position);
+            yield return null;
+        }
+
+        // If they lose the player, they will wander a bit
+        Vector3 playerLastKnownPosition = Player.transform.position;
+        Agent.SetDestination(playerLastKnownPosition);
+
+        if (Vector3.Distance(transform.position, playerLastKnownPosition) < 1f)
+        {
+            // Use new wandering system
+            StartWandering(playerLastKnownPosition, 5f);
+
+            // Wait for the wandering to complete
+            yield return new WaitForSeconds(WanderTime);
+        }
+
+        // Then go back to patrolling
+        IsPlayerSpotted = false;
+        ResetPatrol();
+    }
+
+    protected override IEnumerator OnSoundHeard(Vector3 soundPosition)
+    {
+        // Stop any current wandering
+        StopWandering();
+
+        yield return base.OnSoundHeard(soundPosition);
+
+        Agent.SetDestination(soundPosition);
+        while (Vector3.Distance(transform.position, soundPosition) > 0.1f)
+        {
+            yield return null;
+        }
+
+        // Use new wandering system
+        StartWandering(soundPosition, 5f);
+
+        yield return new WaitForSeconds(WanderTime);
+        ResetPatrol();
+    }
+
+    public void FollowCitizen(GameObject citizen)
+    {
+        // Stop any current wandering when following a citizen
+        StopWandering();
+        Agent.SetDestination(citizen.transform.position);
+    }
+
+    public void ResetPatrol()
+    {
+        // Stop any wandering when resetting patrol
+        StopWandering();
+
+        if (_patrolPoints.Length > 0)
+        {
+            Agent.SetDestination(_patrolPoints[_currentPointIndex].position);
         }
     }
 
     void Reset()
     {
-        _rb = GetComponent<Rigidbody>();
-        _agent = GetComponent<NavMeshAgent>();
+        RB = GetComponent<Rigidbody>();
+        Agent = GetComponent<NavMeshAgent>();
 
         // Create or find a global GameObject for all PatrolPoints
         GameObject globalPatrolPointsObject = GameObject.Find("GlobalPatrolPoints");
@@ -126,11 +195,12 @@ public class BasePatrolEnemy : MonoBehaviour
             patrolPointsObject.transform.SetParent(enemyParentObject.transform);
         }
 
-        _patrolPointsParent = patrolPointsObject.transform;
+        PatrolPointsParent = patrolPointsObject.transform;
     }
 
-    private void OnDrawGizmos()
+    protected override void OnDrawGizmosSelected()
     {
+        base.OnDrawGizmosSelected();
         if (!_showGizmos || _patrolPoints == null || _patrolPoints.Length == 0)
             return;
 
@@ -223,7 +293,7 @@ public class BasePatrolEnemy : MonoBehaviour
                 Undo.RegisterCreatedObjectUndo(point, "Create Patrol Point");
 
                 point.transform.position = hit.point;
-                point.transform.SetParent(_patrolPointsParent); // Set parent to PatrolPoints
+                point.transform.SetParent(PatrolPointsParent); // Set parent to PatrolPoints
 
                 Undo.RecordObject(this, "Add Patrol Point");
 
@@ -237,5 +307,6 @@ public class BasePatrolEnemy : MonoBehaviour
             e.Use();
         }
     }
+
 #endif
 }

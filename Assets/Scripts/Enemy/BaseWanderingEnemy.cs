@@ -1,19 +1,12 @@
+using System.Collections;
 using UnityEngine;
 using UnityEngine.AI;
 using VInspector;
 
 [RequireComponent(typeof(NavMeshAgent))]
 [RequireComponent(typeof(Rigidbody))]
-public class BaseWanderingEnemy : MonoBehaviour
+public class BaseWanderingEnemy : BaseEnemy
 {
-    /// <summary>
-    /// Enemy that wanders from point to point in a random direction in a circular area
-    /// </summary>
-
-    [Tab("Movement")]
-    [SerializeField]
-    private float _speed = 2f;
-
     [Tab("Patrol")]
     [SerializeField]
     private float _wanderRadius = 5f;
@@ -24,48 +17,44 @@ public class BaseWanderingEnemy : MonoBehaviour
     [SerializeField]
     private bool _showGizmos = true;
 
+    [SerializeField, ReadOnly]
     private float _timer;
     private Vector3 _newPosition;
-    private NavMeshAgent _agent;
-    private Transform _patrolPointsParent;
     private Vector3 _confinedAreaCenter;
 
-    private void Start()
+    protected override void Start()
     {
-        _agent = GetComponent<NavMeshAgent>();
-        _agent.speed = _speed;
+        base.Start();
         _timer = _wanderTimer;
-        _confinedAreaCenter = transform.position; // Set the confined area center to the enemy's initial position
+        _confinedAreaCenter = transform.position; // Initialize confined area
+
+        // Start wandering immediately
+        StartWandering(_confinedAreaCenter, _wanderRadius);
     }
 
     private void FixedUpdate()
     {
-        MoveToPos();
-    }
-
-    private void MoveToPos()
-    {
-        _timer += Time.deltaTime;
-
-        if (_timer >= _wanderTimer)
+        // Only manage patrol if not spotted player and not already wandering
+        if (
+            !IsPlayerSpotted
+            && _currentState != EnemyState.Wandering
+            && _currentState != EnemyState.Investigating
+        )
         {
-            _newPosition = RandomNavSphere(_confinedAreaCenter, _wanderRadius, -1); // Use the confined area center
-            _agent.SetDestination(_newPosition);
-            _timer = 0;
+            _timer += Time.deltaTime;
+
+            if (_timer >= _wanderTimer)
+            {
+                // Reset timer and start wandering
+                _timer = 0;
+                StartWandering(_confinedAreaCenter, _wanderRadius);
+            }
         }
     }
 
-    private Vector3 RandomNavSphere(Vector3 origin, float dist, int layermask)
+    protected override void OnDrawGizmosSelected()
     {
-        Vector3 randDirection = Random.insideUnitSphere * dist;
-        randDirection += origin;
-        NavMeshHit navHit;
-        NavMesh.SamplePosition(randDirection, out navHit, dist, layermask);
-        return navHit.position;
-    }
-
-    private void OnDrawGizmos()
-    {
+        base.OnDrawGizmosSelected();
         if (_showGizmos)
         {
             Gizmos.color = Color.red;
@@ -79,8 +68,8 @@ public class BaseWanderingEnemy : MonoBehaviour
 
     private void Reset()
     {
-        _agent = GetComponent<NavMeshAgent>();
-        _agent.speed = _speed;
+        Agent = GetComponent<NavMeshAgent>();
+        Agent.speed = Speed;
         _timer = _wanderTimer;
         _confinedAreaCenter = transform.position;
 
@@ -99,7 +88,7 @@ public class BaseWanderingEnemy : MonoBehaviour
             enemyParentObject.transform.SetParent(globalPatrolPointsObject.transform);
         }
 
-        // Create a separate GameObject for this enemy's PatrolPoints with the name GameObject.name + "PatrolPoints"
+        // Create a separate GameObject for this enemy's PatrolPoints with the name GameObject.name + "PatrolPoints"             e);
         string patrolPointsName = gameObject.name + "ConfinedAreaPoint";
         GameObject patrolPointsObject = GameObject.Find(patrolPointsName);
         if (patrolPointsObject == null)
@@ -108,6 +97,115 @@ public class BaseWanderingEnemy : MonoBehaviour
             patrolPointsObject.transform.SetParent(enemyParentObject.transform);
         }
 
-        _patrolPointsParent = patrolPointsObject.transform;
+        PatrolPointsParent = patrolPointsObject.transform;
+    }
+
+    protected override IEnumerator OnPlayerSpotted()
+    {
+        // Stop wandering to handle the player spotting
+        StopWandering();
+
+        yield return base.OnPlayerSpotted();
+
+        // Find the nearest ranger
+        BasePatrolEnemy nearestRanger = FindNearestRanger();
+        if (nearestRanger != null)
+        {
+            // Move towards the nearest ranger
+            Agent.SetDestination(nearestRanger.transform.position);
+
+            // Wait until the wandering enemy reaches the ranger
+            while (Vector3.Distance(transform.position, nearestRanger.transform.position) > 1f)
+            {
+                Agent.SetDestination(nearestRanger.transform.position);
+                yield return null;
+            }
+
+            // Tell the ranger to follow the wandering enemy back to where it spotted the player
+            nearestRanger.FollowCitizen(gameObject);
+
+            // Move back to the player's last known position
+            Vector3 playerLastKnownPosition = Player.transform.position;
+            Agent.SetDestination(playerLastKnownPosition);
+
+            // Wait until the wandering enemy reaches the player's last known position
+            while (Vector3.Distance(transform.position, playerLastKnownPosition) > 1f)
+            {
+                yield return null;
+            }
+
+            // Use new wandering method for ranger
+            nearestRanger.StartWandering(playerLastKnownPosition, 5f);
+
+            StartCoroutine(ResetPatrol());
+
+            yield return new WaitForSeconds(WanderTime);
+
+            nearestRanger.ResetPatrol();
+        }
+        else
+        {
+            Debug.LogWarning("No ranger found!");
+
+            // Just start wandering ourselves if no ranger is found
+            StartCoroutine(ResetPatrol());
+        }
+    }
+
+    protected override IEnumerator OnSoundHeard(Vector3 soundPosition)
+    {
+        // Stop current wandering
+        StopWandering();
+
+        yield return base.OnSoundHeard(soundPosition);
+
+        Agent.SetDestination(soundPosition);
+        while (Vector3.Distance(transform.position, soundPosition) > 0.1f)
+        {
+            yield return null;
+        }
+
+        // Use new wandering system
+        StartWandering(soundPosition, 5f);
+
+        yield return new WaitForSeconds(WanderTime);
+        StartCoroutine(ResetPatrol());
+    }
+
+    private IEnumerator ResetPatrol()
+    {
+        // Stop any current wandering
+        StopWandering();
+
+        // Return to confined area center
+        while (Vector3.Distance(transform.position, _confinedAreaCenter) > 1f)
+        {
+            Agent.SetDestination(_confinedAreaCenter);
+            yield return null;
+            IsPlayerSpotted = false;
+        }
+
+        // Once back at center, resume normal wandering
+        StartWandering(_confinedAreaCenter, _wanderRadius);
+    }
+
+    private BasePatrolEnemy FindNearestRanger()
+    {
+        BasePatrolEnemy[] rangers = FindObjectsByType<BasePatrolEnemy>(FindObjectsSortMode.None);
+        BasePatrolEnemy nearestRanger = null;
+        float minDistance = Mathf.Infinity;
+        Vector3 currentPosition = transform.position;
+
+        foreach (BasePatrolEnemy ranger in rangers)
+        {
+            float distance = Vector3.Distance(ranger.transform.position, currentPosition);
+            if (distance < minDistance)
+            {
+                nearestRanger = ranger;
+                minDistance = distance;
+            }
+        }
+
+        return nearestRanger;
     }
 }
