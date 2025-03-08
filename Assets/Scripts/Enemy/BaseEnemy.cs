@@ -3,6 +3,9 @@ using UnityEngine;
 using UnityEngine.AI;
 using VInspector;
 
+/// <summary>
+/// Base class for all enemy types that handles core enemy behaviors and states
+/// </summary>
 public class BaseEnemy : MonoBehaviour
 {
     [Tab("Movement")]
@@ -17,7 +20,7 @@ public class BaseEnemy : MonoBehaviour
     public float WanderTime = 5f;
 
     [SerializeField, ReadOnly]
-    private bool _isWandering = false;
+    public bool _isWandering = false;
 
     [SerializeField, ReadOnly]
     private Coroutine _wanderCoroutine = null;
@@ -68,17 +71,41 @@ public class BaseEnemy : MonoBehaviour
     [SerializeField, ReadOnly]
     private float _currentNoiseLevel = 0f;
 
+    [Tab("Debug")]
+    [SerializeField]
+    protected bool _showStateDebug = false;
+
+    [SerializeField]
+    protected bool _PerceptionUpdate = true;
+
+    [SerializeField]
+    private float _perceptionUpdateRate = 0.25f;
+
+    private float _lastPerceptionCheck = 0f;
+
+
+    private EnemyState _previousState;
+    private float _stateChangeTime;
+
+    /// <summary>
+    /// Available states for the enemy AI state machine
+    /// </summary>
     protected enum EnemyState
     {
         Patrolling,
         Investigating,
         Chasing,
-        Wandering
+        Wandering,
+        RunningAway,
+        Protecting,
+        Hiding,
     }
 
     [SerializeField, ReadOnly]
     protected EnemyState _currentState = EnemyState.Patrolling;
 
+
+    #region Unity Lifecycle Methods
     protected virtual void Start()
     {
         Agent = GetComponent<NavMeshAgent>();
@@ -86,6 +113,9 @@ public class BaseEnemy : MonoBehaviour
         RB.isKinematic = true;
         Agent.speed = Speed;
         Player = FindFirstObjectByType<Player>();
+
+        // Set initial state
+        _currentState = EnemyState.Patrolling;
 
         // Register with NoiseManager
         if (NoiseManager.Instance != null)
@@ -96,43 +126,146 @@ public class BaseEnemy : MonoBehaviour
 
     protected virtual void OnDestroy()
     {
-        NoiseManager.Instance.UnregisterEnemy(this);
+        if (NoiseManager.Instance != null)
+        {
+            NoiseManager.Instance.UnregisterEnemy(this);
+        }
     }
 
     protected virtual void Update()
     {
-        CheckVision();
-        CheckHearing();
+        // Handle perception checks
+        UpdatePerception();
 
+        // Process investigation timer
+        UpdateInvestigation();
+
+        // State machine logic
+        UpdateStateMachine();
+    }
+
+    /// <summary>
+    /// Handles perception checks (vision and hearing) based on configuration
+    /// </summary>
+    private void UpdatePerception()
+    {
+        if (_PerceptionUpdate)
+        {
+            if (Time.time > _lastPerceptionCheck + _perceptionUpdateRate)
+            {
+                _lastPerceptionCheck = Time.time;
+                CheckVision();
+                CheckHearing();
+            }
+        }
+        else
+        {
+            CheckVision();
+            CheckHearing();
+        }
+    }
+
+    /// <summary>
+    /// Updates the investigation timer and state transitions
+    /// </summary>
+    private void UpdateInvestigation()
+    {
         if (_isInvestigating)
         {
             _investigationTimeRemaining -= Time.deltaTime;
             if (_investigationTimeRemaining <= 0)
             {
                 _isInvestigating = false;
-                _currentState = EnemyState.Patrolling;
-            }
-        }
 
-        // State machine logic
-        switch (_currentState)
-        {
-            case EnemyState.Patrolling:
-                // Regular patrol behavior
-                break;
-            case EnemyState.Investigating:
-                // Move towards noise source
-                Agent.SetDestination(_lastHeardPosition);
-                break;
-            case EnemyState.Chasing:
-                // Chase player
-                break;
-            case EnemyState.Wandering:
-                // Wandering is handled by the coroutine
-                break;
+                // Transition to patrolling state when investigation is complete
+                if (_currentState == EnemyState.Investigating)
+                {
+                    SetState(EnemyState.Patrolling);
+                    Debug.Log($"{gameObject.name} finished investigating, returning to patrol");
+                }
+            }
         }
     }
 
+    /// <summary>
+    /// Updates the enemy behavior based on the current state
+    /// </summary>
+    private void UpdateStateMachine()
+    {
+        switch (_currentState)
+        {
+            case EnemyState.Patrolling:
+                Patrol();
+                break;
+            case EnemyState.Investigating:
+                Investigate();
+                break;
+            case EnemyState.Chasing:
+                Chase();
+                break;
+            case EnemyState.Wandering:
+                Wander(WanderTime, transform.position, 5f);
+                break;
+        }
+    }
+    #endregion
+
+    #region State Management
+    /// <summary>
+    /// Changes the enemy state and handles related events and debugging
+    /// </summary>
+    /// <param name="newState">The new state to transition to</param>
+    protected virtual void SetState(EnemyState newState)
+    {
+        if (_currentState != newState)
+        {
+            _previousState = _currentState;
+            _currentState = newState;
+            _stateChangeTime = Time.time;
+
+            if (_showStateDebug)
+            {
+                Debug.Log(
+                    $"{gameObject.name} state changed from {_previousState} to {_currentState}"
+                );
+            }
+
+            // Reset agent path when changing states
+            if (Agent != null && Agent.isOnNavMesh)
+            {
+                Agent.ResetPath();
+            }
+        }
+    }
+    #endregion
+
+    #region Behavior Methods
+    /// <summary>
+    /// Handles patrol behavior - to be implemented by derived classes
+    /// </summary>
+    protected virtual void Patrol() { }
+
+    /// <summary>
+    /// Handles investigation behavior - moves to last heard position
+    /// </summary>
+    protected virtual void Investigate()
+    {
+        Agent.SetDestination(_lastHeardPosition);
+    }
+
+    /// <summary>
+    /// Handles chase behavior - pursues the player
+    /// </summary>
+    protected virtual void Chase()
+    {
+        if (Player != null)
+        {
+            Agent.SetDestination(Player.transform.position);
+        }
+    }
+    #endregion
+
+    #region Gizmo Visualization
     protected virtual void OnDrawGizmos()
     {
         // Always draw hearing radius if enabled
@@ -151,6 +284,9 @@ public class BaseEnemy : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Draws debug gizmos when the object is selected
+    /// </summary>
     protected virtual void OnDrawGizmosSelected()
     {
         // Vision Gizmos
@@ -166,39 +302,60 @@ public class BaseEnemy : MonoBehaviour
         Gizmos.color = new Color(0, 0.5f, 1f, 0.4f);
         Gizmos.DrawWireSphere(transform.position, HearingDistance);
 
-        if (Application.isPlaying && _currentNoiseLevel > 0)
+        if (Application.isPlaying)
         {
-            UnityEditor.Handles.Label(
-                transform.position + Vector3.up * 2,
-                $"Noise: {_currentNoiseLevel:F1}/{_hearingThreshold:F1}"
-            );
+            // Show noise level
+            if (_currentNoiseLevel > 0)
+            {
+                UnityEditor.Handles.Label(
+                    transform.position + Vector3.up * 2,
+                    $"Noise: {_currentNoiseLevel:F1}/{_hearingThreshold:F1}"
+                );
+            }
+
+            // Show current state
+            if (_showStateDebug)
+            {
+                string stateInfo = $"State: {_currentState}";
+                if (Time.time - _stateChangeTime < 3f)
+                {
+                    stateInfo += $" (was {_previousState})";
+                }
+                UnityEditor.Handles.Label(transform.position + Vector3.up * 2.5f, stateInfo);
+            }
         }
     }
+    #endregion
 
+    #region Perception Methods
+    /// <summary>
+    /// Checks if the enemy can see the player
+    /// </summary>
     private void CheckVision()
     {
-        if (CanSee)
-        {
-            Vector3 directionToPlayer = (Player.transform.position - transform.position).normalized;
-            float angleToPlayer = Vector3.Angle(transform.forward, directionToPlayer);
+        if (!CanSee || Player == null)
+            return;
 
-            if (
-                angleToPlayer < VisionAngle / 2
-                && Vector3.Distance(transform.position, Player.transform.position) <= VisionDistance
-            )
+        Vector3 directionToPlayer = (Player.transform.position - transform.position).normalized;
+        float angleToPlayer = Vector3.Angle(transform.forward, directionToPlayer);
+        float distanceToPlayer = Vector3.Distance(transform.position, Player.transform.position);
+
+        if (angleToPlayer < VisionAngle / 2 && distanceToPlayer <= VisionDistance)
+        {
+            RaycastHit hit;
+            if (Physics.Raycast(transform.position, directionToPlayer, out hit, VisionDistance))
             {
-                RaycastHit hit;
-                if (Physics.Raycast(transform.position, directionToPlayer, out hit, VisionDistance))
+                if (hit.collider.GetComponent<Player>() != null && !IsPlayerSpotted)
                 {
-                    if (hit.collider.GetComponent<Player>() != null && !IsPlayerSpotted)
-                    {
-                        StartCoroutine(OnPlayerSpotted());
-                    }
+                    StartCoroutine(OnPlayerSpotted());
                 }
             }
         }
     }
 
+    /// <summary>
+    /// Checks if the enemy can hear nearby objects, especially the player
+    /// </summary>
     private void CheckHearing()
     {
         if (CanHear)
@@ -206,7 +363,10 @@ public class BaseEnemy : MonoBehaviour
             Collider[] colliders = Physics.OverlapSphere(transform.position, HearingDistance);
             foreach (Collider collider in colliders)
             {
-                if (collider.GetComponent<Player>() != null)
+                if (collider.GetComponent<Player>() != null && !IsPlayerSpotted)
+                {
+                    StartCoroutine(OnPlayerSpotted());
+                }
                 {
                     RaycastHit hit;
                     if (
@@ -228,7 +388,14 @@ public class BaseEnemy : MonoBehaviour
             }
         }
     }
+    #endregion
 
+    #region Event Handlers
+    /// <summary>
+    /// Handles noise events detected by the enemy
+    /// </summary>
+    /// <param name="noisePosition">Position of the noise source</param>
+    /// <param name="noiseLevel">Intensity level of the noise</param>
     public void OnNoiseHeard(Vector3 noisePosition, float noiseLevel)
     {
         if (!CanHear)
@@ -250,24 +417,90 @@ public class BaseEnemy : MonoBehaviour
                 _isInvestigating = true;
                 _lastHeardPosition = noisePosition;
                 _investigationTimeRemaining = _investigationTime;
-                _currentState = EnemyState.Investigating;
 
-                StartCoroutine(OnSoundHeard(noisePosition));
+                // Only change to investigating if not currently chasing
+                if (_currentState != EnemyState.Chasing)
+                {
+                    SetState(EnemyState.Investigating);
+                    StartCoroutine(OnSoundHeard(noisePosition));
+                }
 
                 Debug.Log($"Enemy heard noise of level {adjustedNoiseLevel} at {noisePosition}");
             }
         }
     }
 
-    // Public method to start wandering
+    /// <summary>
+    /// Handles the event when the player is spotted
+    /// </summary>
+    protected virtual IEnumerator OnPlayerSpotted()
+    {
+        Debug.Log("Player spotted! " + gameObject.name);
+        IsPlayerSpotted = true;
+        SetState(EnemyState.Chasing);
+        yield return null;
+    }
+
+    /// <summary>
+    /// Handles the event when a sound is heard
+    /// </summary>
+    /// <param name="soundPosition">Position where the sound originated</param>
+    protected virtual IEnumerator OnSoundHeard(Vector3 soundPosition)
+    {
+        Debug.Log("Sound heard! " + gameObject.name);
+        Agent.SetDestination(soundPosition);
+
+        // Wait until we're close to the investigation point
+        while (Vector3.Distance(transform.position, soundPosition) > 0.5f && _isInvestigating)
+        {
+            // Keep updating destination in case player moves
+            if (_currentState == EnemyState.Chasing && Player != null)
+            {
+                break; // Exit if we've switched to chasing
+            }
+
+            yield return null;
+        }
+
+        // Look around once we reach the point (only if still investigating)
+        if (_isInvestigating && _currentState == EnemyState.Investigating)
+        {
+            // Look around by rotating
+            float originalRotation = transform.eulerAngles.y;
+            float timer = 0;
+            while (timer < 2.0f && _isInvestigating)
+            {
+                transform.rotation = Quaternion.Euler(
+                    0,
+                    originalRotation + Mathf.Sin(timer * 3) * 90,
+                    0
+                );
+                timer += Time.deltaTime;
+                yield return null;
+            }
+
+            // Reset rotation
+            transform.rotation = Quaternion.Euler(0, originalRotation, 0);
+        }
+    }
+    #endregion
+
+    #region Wandering Methods
+    /// <summary>
+    /// Starts the wandering behavior in a confined area
+    /// </summary>
+    /// <param name="confinedAreaCenter">Center point of the wandering area</param>
+    /// <param name="radius">Radius of the wandering area</param>
     public void StartWandering(Vector3 confinedAreaCenter, float radius)
     {
         StopWandering(); // Stop any existing wandering
-        _currentState = EnemyState.Wandering;
+        SetState(EnemyState.Wandering);
         _wanderCoroutine = StartCoroutine(WanderCoroutine(WanderTime, confinedAreaCenter, radius));
     }
 
-    // Public method to stop wandering
+    /// <summary>
+    /// Stops the current wandering behavior
+    /// </summary>
     public void StopWandering()
     {
         if (_wanderCoroutine != null)
@@ -285,7 +518,12 @@ public class BaseEnemy : MonoBehaviour
         }
     }
 
-    // Coroutine for wandering behavior
+    /// <summary>
+    /// Coroutine that handles the wandering behavior
+    /// </summary>
+    /// <param name="wanderTime">Total time to wander</param>
+    /// <param name="confinedAreaCenter">Center of the wander area</param>
+    /// <param name="radius">Radius of the wander area</param>
     private IEnumerator WanderCoroutine(float wanderTime, Vector3 confinedAreaCenter, float radius)
     {
         _isWandering = true;
@@ -331,56 +569,12 @@ public class BaseEnemy : MonoBehaviour
         _wanderCoroutine = null;
     }
 
-    // Legacy method for compatibility - starts the coroutine version
+    /// <summary>
+    /// Legacy method for compatibility - starts the coroutine version
+    /// </summary>
     public void Wander(float wanderTime, Vector3 confinedAreaCenter, float radius)
     {
         StartWandering(confinedAreaCenter, radius);
     }
-
-    protected virtual IEnumerator OnPlayerSpotted()
-    {
-        Debug.Log("Player spotted! " + gameObject.name);
-        IsPlayerSpotted = true;
-        _currentState = EnemyState.Chasing;
-        yield return null;
-    }
-
-    protected virtual IEnumerator OnSoundHeard(Vector3 soundPosition)
-    {
-        Debug.Log("Sound heard! " + gameObject.name);
-        Agent.SetDestination(soundPosition);
-
-        // Wait until we're close to the investigation point
-        while (Vector3.Distance(transform.position, soundPosition) > 0.5f && _isInvestigating)
-        {
-            // Keep updating destination in case player moves
-            if (_currentState == EnemyState.Chasing && Player != null)
-            {
-                break; // Exit if we've switched to chasing
-            }
-
-            yield return null;
-        }
-
-        // Look around once we reach the point (only if still investigating)
-        if (_isInvestigating && _currentState == EnemyState.Investigating)
-        {
-            // Look around by rotating
-            float originalRotation = transform.eulerAngles.y;
-            float timer = 0;
-            while (timer < 2.0f && _isInvestigating)
-            {
-                transform.rotation = Quaternion.Euler(
-                    0,
-                    originalRotation + Mathf.Sin(timer * 3) * 90,
-                    0
-                );
-                timer += Time.deltaTime;
-                yield return null;
-            }
-
-            // Reset rotation
-            transform.rotation = Quaternion.Euler(0, originalRotation, 0);
-        }
-    }
+    #endregion
 }
