@@ -3,7 +3,6 @@ using UnityEngine;
 
 public class NoiseManager : MonoBehaviour
 {
-    //make the class a singleton
     private static NoiseManager _instance;
 
     public static NoiseManager Instance
@@ -115,7 +114,7 @@ public class NoiseManager : MonoBehaviour
             {
                 position = position,
                 intensity = noiseLevel,
-                maxRadius = Mathf.Min(noiseLevel * 2.0f, _maxNoiseDistance), // Scale radius based on noise level with a max
+                maxRadius = Mathf.Min(noiseLevel * 2.0f, _maxNoiseDistance),
                 startTime = Time.time,
                 duration = _defaultNoiseDuration
             };

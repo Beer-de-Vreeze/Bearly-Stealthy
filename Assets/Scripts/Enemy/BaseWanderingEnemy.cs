@@ -111,37 +111,59 @@ public class BaseWanderingEnemy : BaseEnemy
         BasePatrolEnemy nearestRanger = FindNearestRanger();
         if (nearestRanger != null)
         {
-            // Move towards the nearest ranger
-            Agent.SetDestination(nearestRanger.transform.position);
-
-            // Wait until the wandering enemy reaches the ranger
-            while (Vector3.Distance(transform.position, nearestRanger.transform.position) > 1f)
+            // Only proceed with ranger logic if we're still in chase state
+            if (_currentState == EnemyState.Chasing)
             {
+                // Move towards the nearest ranger
                 Agent.SetDestination(nearestRanger.transform.position);
-                yield return null;
+
+                // Wait until the wandering enemy reaches the ranger
+                while (
+                    _currentState == EnemyState.Chasing
+                    && Vector3.Distance(transform.position, nearestRanger.transform.position) > 1f
+                )
+                {
+                    Agent.SetDestination(nearestRanger.transform.position);
+                    yield return null;
+                }
+
+                // If state changed, abort the ranger interaction
+                if (_currentState != EnemyState.Chasing)
+                {
+                    yield break;
+                }
+
+                // Tell the ranger to follow the wandering enemy back to where it spotted the player
+                nearestRanger.FollowCitizen(gameObject);
+
+                // Move back to the player's last known position
+                Vector3 playerLastKnownPosition = Player.transform.position;
+                Agent.SetDestination(playerLastKnownPosition);
+
+                // Wait until the wandering enemy reaches the player's last known position
+                while (
+                    _currentState == EnemyState.Chasing
+                    && Vector3.Distance(transform.position, playerLastKnownPosition) > 1f
+                )
+                {
+                    yield return null;
+                }
+
+                // If state changed, abort
+                if (_currentState != EnemyState.Chasing)
+                {
+                    yield break;
+                }
+
+                // Use new wandering method for ranger
+                nearestRanger.StartWandering(playerLastKnownPosition, 5f);
+
+                StartCoroutine(ResetPatrol());
+
+                yield return new WaitForSeconds(WanderTime);
+
+                nearestRanger.ResetPatrol();
             }
-
-            // Tell the ranger to follow the wandering enemy back to where it spotted the player
-            nearestRanger.FollowCitizen(gameObject);
-
-            // Move back to the player's last known position
-            Vector3 playerLastKnownPosition = Player.transform.position;
-            Agent.SetDestination(playerLastKnownPosition);
-
-            // Wait until the wandering enemy reaches the player's last known position
-            while (Vector3.Distance(transform.position, playerLastKnownPosition) > 1f)
-            {
-                yield return null;
-            }
-
-            // Use new wandering method for ranger
-            nearestRanger.StartWandering(playerLastKnownPosition, 5f);
-
-            StartCoroutine(ResetPatrol());
-
-            yield return new WaitForSeconds(WanderTime);
-
-            nearestRanger.ResetPatrol();
         }
         else
         {
@@ -170,6 +192,25 @@ public class BaseWanderingEnemy : BaseEnemy
 
         yield return new WaitForSeconds(WanderTime);
         StartCoroutine(ResetPatrol());
+    }
+
+    protected override void LosePlayerVisibility()
+    {
+        base.LosePlayerVisibility();
+
+        // After losing sight, return to wandering centered at original position
+        StartCoroutine(ReturnToOriginalWanderArea());
+    }
+
+    private IEnumerator ReturnToOriginalWanderArea()
+    {
+        yield return new WaitForSeconds(_investigationTime);
+
+        // Only return to original position if we're not chasing again
+        if (_currentState != EnemyState.Chasing)
+        {
+            StartCoroutine(ResetPatrol());
+        }
     }
 
     private IEnumerator ResetPatrol()

@@ -32,6 +32,15 @@ public class BaseEnemy : MonoBehaviour
     [SerializeField]
     protected float VisionAngle = 45f;
 
+    [SerializeField]
+    protected float VisibilityCheckInterval = 0.5f;
+
+    [SerializeField]
+    protected float PlayerVisibilityTimeout = 3f;
+
+    [SerializeField, ReadOnly]
+    protected float LastPlayerVisibleTime = 0f;
+
     [Tab("Hearing")]
     [SerializeField]
     protected bool CanHear = true;
@@ -54,7 +63,7 @@ public class BaseEnemy : MonoBehaviour
 
     [Tab("Investigation")]
     [SerializeField]
-    private float _investigationTime = 10f;
+    protected float _investigationTime = 10f;
 
     [SerializeField, ReadOnly]
     private bool _isInvestigating = false;
@@ -63,7 +72,7 @@ public class BaseEnemy : MonoBehaviour
     private Vector3 _lastHeardPosition;
 
     [SerializeField, ReadOnly]
-    private float _investigationTimeRemaining = 0f;
+    protected float _investigationTimeRemaining = 0f;
 
     [SerializeField, ReadOnly]
     private float _currentNoiseLevel = 0f;
@@ -101,6 +110,32 @@ public class BaseEnemy : MonoBehaviour
 
     protected virtual void Update()
     {
+        // If we're chasing, check if player is still visible
+        if (_currentState == EnemyState.Chasing)
+        {
+            if (Time.time - LastPlayerVisibleTime > PlayerVisibilityTimeout)
+            {
+                LosePlayerVisibility();
+            }
+            else
+            {
+                // Check visibility periodically instead of every frame
+                if (Time.frameCount % (int)(VisibilityCheckInterval * 60) == 0)
+                {
+                    if (!IsPlayerVisible())
+                    {
+                        // Player not visible, but we'll wait for timeout before giving up
+                        // LastPlayerVisibleTime remains unchanged
+                    }
+                    else
+                    {
+                        // Update last visible time since we can still see the player
+                        LastPlayerVisibleTime = Time.time;
+                    }
+                }
+            }
+        }
+
         CheckVision();
         CheckHearing();
 
@@ -190,9 +225,16 @@ public class BaseEnemy : MonoBehaviour
                 RaycastHit hit;
                 if (Physics.Raycast(transform.position, directionToPlayer, out hit, VisionDistance))
                 {
-                    if (hit.collider.GetComponent<Player>() != null && !IsPlayerSpotted)
+                    if (hit.collider.GetComponent<Player>() != null)
                     {
-                        StartCoroutine(OnPlayerSpotted());
+                        // If player wasn't spotted before, trigger the spotted event
+                        if (!IsPlayerSpotted)
+                        {
+                            StartCoroutine(OnPlayerSpotted());
+                        }
+
+                        // Update last visible time since we can see the player
+                        LastPlayerVisibleTime = Time.time;
                     }
                 }
             }
@@ -342,6 +384,7 @@ public class BaseEnemy : MonoBehaviour
         Debug.Log("Player spotted! " + gameObject.name);
         IsPlayerSpotted = true;
         _currentState = EnemyState.Chasing;
+        LastPlayerVisibleTime = Time.time; // Initialize the last visible time
         yield return null;
     }
 
@@ -381,6 +424,52 @@ public class BaseEnemy : MonoBehaviour
 
             // Reset rotation
             transform.rotation = Quaternion.Euler(0, originalRotation, 0);
+        }
+    }
+
+    // Check if the player is currently visible to the enemy
+    protected virtual bool IsPlayerVisible()
+    {
+        if (!CanSee || Player == null)
+            return false;
+
+        Vector3 directionToPlayer = (Player.transform.position - transform.position).normalized;
+        float angleToPlayer = Vector3.Angle(transform.forward, directionToPlayer);
+
+        if (
+            angleToPlayer < VisionAngle / 2
+            && Vector3.Distance(transform.position, Player.transform.position) <= VisionDistance
+        )
+        {
+            RaycastHit hit;
+            if (Physics.Raycast(transform.position, directionToPlayer, out hit, VisionDistance))
+            {
+                if (hit.collider.GetComponent<Player>() != null)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    // Called when player visibility is lost
+    protected virtual void LosePlayerVisibility()
+    {
+        if (_currentState == EnemyState.Chasing)
+        {
+            Debug.Log(gameObject.name + " lost sight of player");
+            IsPlayerSpotted = false;
+
+            // Investigate the player's last known position
+            _lastHeardPosition = Player.transform.position;
+            _isInvestigating = true;
+            _investigationTimeRemaining = _investigationTime;
+            _currentState = EnemyState.Investigating;
+
+            // Start wandering at player's last known position
+            StartWandering(Player.transform.position, 5f);
         }
     }
 }

@@ -60,6 +60,7 @@ public class Player : MonoBehaviour
     private bool _isHoldingObject = false;
 
     private Vector3 _movementDirection = Vector3.zero;
+    private bool _isMovingBackwards = false;
 
     void Start()
     {
@@ -67,6 +68,7 @@ public class Player : MonoBehaviour
         _animator = GetComponent<Animator>();
         Cursor.lockState = CursorLockMode.Locked;
         Cursor.visible = false;
+        SetUp();
     }
 
     void Update()
@@ -74,7 +76,14 @@ public class Player : MonoBehaviour
         ProcessInput();
         GenerateNoise();
         HandleObjectInteraction();
-        if (Input.GetKeyDown(KeyCode.V)) { }
+        if (Input.GetKeyDown(KeyCode.V))
+        {
+        }
+        if (Input.GetKeyDown(KeyCode.Z))
+        {
+            Cursor.lockState = CursorLockMode.None;
+            Cursor.visible = true;
+        }
     }
 
     void FixedUpdate()
@@ -87,27 +96,27 @@ public class Player : MonoBehaviour
         Vector2 movementInput = InputManager.Instance.PlayerInput.Player.Move.ReadValue<Vector2>();
         _movementDirection = new Vector3(movementInput.x, 0, movementInput.y);
         _movementDirection = Vector3.ClampMagnitude(_movementDirection, 1f);
-        _movementDirection = transform.TransformDirection(_movementDirection); // Convert to local space
+        _movementDirection = transform.TransformDirection(_movementDirection);
+
+        _isMovingBackwards = movementInput.y < 0;
+        bool isMovingRight = movementInput.x > 0;
+        bool isMovingLeft = movementInput.x < 0;
 
         float speed;
-        bool isMovingBackwards = _movementDirection.z < 0;
-        bool isMovingRight = _movementDirection.x > 0;
-        bool isMovingLeft = _movementDirection.x < 0;
-
         if (InputManager.Instance.PlayerInput.Player.Sprint.ReadValue<float>() > 0)
         {
             speed = _runSpeed;
-            //SetAnimationState(true, false, false, isMovingBackwards, isMovingLeft, isMovingRight);
+            //SetAnimationState(true, false, false, _isMovingBackwards, isMovingLeft, isMovingRight);
         }
         else if (InputManager.Instance.PlayerInput.Player.Stealth.ReadValue<float>() > 0)
         {
             speed = _stealthSpeed;
-            //SetAnimationState(false, true, false, isMovingBackwards, isMovingLeft, isMovingRight);
+            //SetAnimationState(false, true, false, _isMovingBackwards, isMovingLeft, isMovingRight);
         }
         else
         {
             speed = _walkSpeed;
-            //SetAnimationState(false, false, true, isMovingBackwards, isMovingLeft, isMovingRight);
+            //SetAnimationState(false, false, true, _isMovingBackwards, isMovingLeft, isMovingRight);
         }
 
         _movementDirection *= speed;
@@ -118,7 +127,8 @@ public class Player : MonoBehaviour
         Vector3 targetPosition = _rb.position + _movementDirection * Time.fixedDeltaTime;
         _rb.MovePosition(targetPosition);
 
-        if (_movementDirection != Vector3.zero)
+        // Only rotate to face movement direction when not moving backwards
+        if (_movementDirection != Vector3.zero && !_isMovingBackwards)
         {
             Quaternion targetRotation = Quaternion.LookRotation(_movementDirection);
             _rb.rotation = Quaternion.Slerp(
@@ -126,6 +136,24 @@ public class Player : MonoBehaviour
                 targetRotation,
                 Time.fixedDeltaTime * _turnSpeed
             );
+        }
+        // When moving backward, maintain forward orientation but allow sideways rotation
+        else if (_movementDirection != Vector3.zero && _isMovingBackwards)
+        {
+            Vector3 horizontalDirection = new Vector3(_movementDirection.x, 0, 0).normalized;
+            if (horizontalDirection != Vector3.zero)
+            {
+                Vector3 lookDirection = transform.forward;
+                lookDirection.x = horizontalDirection.x;
+                lookDirection = lookDirection.normalized;
+                
+                Quaternion targetRotation = Quaternion.LookRotation(lookDirection);
+                _rb.rotation = Quaternion.Slerp(
+                    _rb.rotation,
+                    targetRotation,
+                    Time.fixedDeltaTime * _turnSpeed
+                );
+            }
         }
     }
 
@@ -258,9 +286,19 @@ public class Player : MonoBehaviour
     //     _animator.SetBool("Run Backward Right", walking && backward && right);
     // }
 
-    void Reset()
+    private void BearRoar()
+    {
+        GenerateNoise(100f);
+    }
+
+    private void Reset()
     {
         _rb = GetComponent<Rigidbody>();
         _animator = GetComponent<Animator>();
+    }
+
+    private void SetUp()
+    {
+        InputManager.Instance.PlayerInput.Player.Roar.performed += ctx => BearRoar();
     }
 }

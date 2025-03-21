@@ -100,31 +100,51 @@ public class BasePatrolEnemy : BaseEnemy
 
         yield return base.OnPlayerSpotted();
 
-        IsPlayerSpotted = true;
-
         // Chase after the player if the player is spotted
-        while (Vector3.Distance(transform.position, Player.transform.position) > 1f)
+        while (
+            _currentState == EnemyState.Chasing
+            && Vector3.Distance(transform.position, Player.transform.position) > 1f
+        )
         {
             Agent.SetDestination(Player.transform.position);
             yield return null;
+
+            // If we've lost sight for too long, this will be handled in Update()
         }
 
-        // If they lose the player, they will wander a bit
-        Vector3 playerLastKnownPosition = Player.transform.position;
-        Agent.SetDestination(playerLastKnownPosition);
-
-        if (Vector3.Distance(transform.position, playerLastKnownPosition) < 1f)
+        // If we've caught the player or state has changed, handle accordingly
+        if (_currentState != EnemyState.Chasing)
         {
-            // Use new wandering system
-            StartWandering(playerLastKnownPosition, 5f);
-
-            // Wait for the wandering to complete
-            yield return new WaitForSeconds(WanderTime);
+            // State was changed elsewhere (likely in Update due to losing visibility)
+            // Let that logic handle the transition
+            yield break;
         }
 
-        // Then go back to patrolling
-        IsPlayerSpotted = false;
-        ResetPatrol();
+        // If we reached the player
+        if (Vector3.Distance(transform.position, Player.transform.position) <= 1f)
+        {
+            // Handle reaching the player (attack, game over, etc.)
+            Debug.Log("Caught the player!");
+        }
+    }
+
+    protected override void LosePlayerVisibility()
+    {
+        base.LosePlayerVisibility();
+
+        // After investigating, return to patrol
+        StartCoroutine(ReturnToPatrolAfterDelay(_investigationTime));
+    }
+
+    private IEnumerator ReturnToPatrolAfterDelay(float delay)
+    {
+        yield return new WaitForSeconds(delay);
+
+        // Only return to patrol if we're not chasing again
+        if (_currentState != EnemyState.Chasing)
+        {
+            ResetPatrol();
+        }
     }
 
     protected override IEnumerator OnSoundHeard(Vector3 soundPosition)
@@ -159,9 +179,19 @@ public class BasePatrolEnemy : BaseEnemy
         // Stop any wandering when resetting patrol
         StopWandering();
 
+        _currentState = EnemyState.Patrolling;
+        IsPlayerSpotted = false;
+
         if (_patrolPoints.Length > 0)
         {
-            Agent.SetDestination(_patrolPoints[_currentPointIndex].position);
+            if (_patrolLoop)
+            {
+                PatrolLoopMethod();
+            }
+            else
+            {
+                PatrolBackAndForth();
+            }
         }
     }
 
@@ -198,9 +228,9 @@ public class BasePatrolEnemy : BaseEnemy
         PatrolPointsParent = patrolPointsObject.transform;
     }
 
-    protected override void OnDrawGizmosSelected()
+    protected override void OnDrawGizmos()
     {
-        base.OnDrawGizmosSelected();
+        base.OnDrawGizmos();
         if (!_showGizmos || _patrolPoints == null || _patrolPoints.Length == 0)
             return;
 
@@ -242,6 +272,12 @@ public class BasePatrolEnemy : BaseEnemy
                 _patrolPoints[0].position
             );
         }
+    }
+
+    protected override void OnDrawGizmosSelected()
+    {
+        base.OnDrawGizmosSelected();
+        // Patrol point visualization moved to OnDrawGizmos
     }
 
 #if UNITY_EDITOR
