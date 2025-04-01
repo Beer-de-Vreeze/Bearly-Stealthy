@@ -39,6 +39,11 @@ public class BaseWanderingEnemy : BaseEnemy
             !IsPlayerSpotted
             && _currentState != EnemyState.Wandering
             && _currentState != EnemyState.Investigating
+<<<<<<< Updated upstream
+            && _currentState != EnemyState.Chasing
+=======
+            && _currentState != EnemyState.Chasing // Don't wander if chasing
+>>>>>>> Stashed changes
         )
         {
             _timer += Time.deltaTime;
@@ -105,22 +110,32 @@ public class BaseWanderingEnemy : BaseEnemy
         // Stop wandering to handle the player spotting
         StopWandering();
 
+        // Update alert level to Confirmed
+        DetectionMeter = 1.0f;
+        UpdateAlertLevel();
+
         yield return base.OnPlayerSpotted();
 
         // Find the nearest ranger
         BasePatrolEnemy nearestRanger = FindNearestRanger();
-        if (nearestRanger != null)
+        if (
+            nearestRanger != null
+            && Vector3.Distance(transform.position, nearestRanger.transform.position) < 30f
+        )
         {
             // Only proceed with ranger logic if we're still in chase state
-            if (_currentState == EnemyState.Chasing)
+            if (_currentState == EnemyState.Chasing && Player != null)
             {
+                // Store player position before moving to ranger
+                Vector3 playerLastKnownPosition = Player.transform.position;
+
                 // Move towards the nearest ranger
                 Agent.SetDestination(nearestRanger.transform.position);
 
                 // Wait until the wandering enemy reaches the ranger
                 while (
                     _currentState == EnemyState.Chasing
-                    && Vector3.Distance(transform.position, nearestRanger.transform.position) > 1f
+                    && Vector3.Distance(transform.position, nearestRanger.transform.position) > 1.5f
                 )
                 {
                     Agent.SetDestination(nearestRanger.transform.position);
@@ -136,14 +151,20 @@ public class BaseWanderingEnemy : BaseEnemy
                 // Tell the ranger to follow the wandering enemy back to where it spotted the player
                 nearestRanger.FollowCitizen(gameObject);
 
+                // Update the ranger's alert level too
+                if (nearestRanger.CurrentAlertLevel < AlertLevel.Alert)
+                {
+                    nearestRanger.DetectionMeter = 0.75f;
+                    nearestRanger.UpdateRangerAlertLevel(AlertLevel.Alert);
+                }
+
                 // Move back to the player's last known position
-                Vector3 playerLastKnownPosition = Player.transform.position;
                 Agent.SetDestination(playerLastKnownPosition);
 
                 // Wait until the wandering enemy reaches the player's last known position
                 while (
                     _currentState == EnemyState.Chasing
-                    && Vector3.Distance(transform.position, playerLastKnownPosition) > 1f
+                    && Vector3.Distance(transform.position, playerLastKnownPosition) > 1.5f
                 )
                 {
                     yield return null;
@@ -159,17 +180,22 @@ public class BaseWanderingEnemy : BaseEnemy
                 nearestRanger.StartWandering(playerLastKnownPosition, 5f);
 
                 StartCoroutine(ResetPatrol());
-
-                yield return new WaitForSeconds(WanderTime);
-
-                nearestRanger.ResetPatrol();
             }
         }
         else
         {
-            Debug.LogWarning("No ranger found!");
+            // Just chase the player ourselves if no ranger is found nearby
+            while (
+                _currentState == EnemyState.Chasing
+                && Player != null
+                && Vector3.Distance(transform.position, Player.transform.position) > 1f
+            )
+            {
+                Agent.SetDestination(Player.transform.position);
+                yield return null;
+            }
 
-            // Just start wandering ourselves if no ranger is found
+            // After losing the player or reaching them, return to patrolling
             StartCoroutine(ResetPatrol());
         }
     }
@@ -178,6 +204,13 @@ public class BaseWanderingEnemy : BaseEnemy
     {
         // Stop current wandering
         StopWandering();
+
+        // Update alert level to at least Suspicious when hearing a sound
+        if (CurrentAlertLevel == AlertLevel.Normal)
+        {
+            CurrentAlertLevel = AlertLevel.Suspicious;
+            DetectionMeter = 0.5f;
+        }
 
         yield return base.OnSoundHeard(soundPosition);
 
@@ -197,6 +230,9 @@ public class BaseWanderingEnemy : BaseEnemy
     protected override void LosePlayerVisibility()
     {
         base.LosePlayerVisibility();
+
+        // Update alert level when visibility is lost
+        CurrentAlertLevel = AlertLevel.Suspicious;
 
         // After losing sight, return to wandering centered at original position
         StartCoroutine(ReturnToOriginalWanderArea());
@@ -218,13 +254,27 @@ public class BaseWanderingEnemy : BaseEnemy
         // Stop any current wandering
         StopWandering();
 
+        // Set state to investigating while returning
+        _currentState = EnemyState.Investigating;
+        IsPlayerSpotted = false;
+
         // Return to confined area center
-        while (Vector3.Distance(transform.position, _confinedAreaCenter) > 1f)
+        Agent.SetDestination(_confinedAreaCenter);
+
+        while (Vector3.Distance(transform.position, _confinedAreaCenter) > 2f)
         {
-            Agent.SetDestination(_confinedAreaCenter);
+            // If we spot the player again during return, break out
+            if (IsPlayerSpotted || _currentState == EnemyState.Chasing)
+            {
+                yield break;
+            }
+
             yield return null;
-            IsPlayerSpotted = false;
         }
+
+        // Reset alert level
+        DetectionMeter = 0f;
+        CurrentAlertLevel = AlertLevel.Normal;
 
         // Once back at center, resume normal wandering
         StartWandering(_confinedAreaCenter, _wanderRadius);
