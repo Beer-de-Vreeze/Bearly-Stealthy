@@ -116,6 +116,7 @@ public class BaseEnemy : MonoBehaviour
             if (Time.time - LastPlayerVisibleTime > PlayerVisibilityTimeout)
             {
                 LosePlayerVisibility();
+                Debug.Log("Player lost sight of enemy: " + gameObject.name);
             }
             else
             {
@@ -137,6 +138,7 @@ public class BaseEnemy : MonoBehaviour
         }
 
         CheckVision();
+        // Remove excessive debug log
         CheckHearing();
 
         if (_isInvestigating)
@@ -227,15 +229,27 @@ public class BaseEnemy : MonoBehaviour
                 {
                     if (hit.collider.GetComponent<Player>() != null)
                     {
-                        // If player wasn't spotted before, trigger the spotted event
+                        // Player is visible
                         if (!IsPlayerSpotted)
                         {
                             StartCoroutine(OnPlayerSpotted());
+                            Debug.Log("Player spotted by " + gameObject.name);
                         }
 
                         // Update last visible time since we can see the player
                         LastPlayerVisibleTime = Time.time;
+                        return; // Exit after spotting the player
                     }
+                }
+            }
+
+            // If we reach here, player is not currently visible
+            if (IsPlayerSpotted && _currentState == EnemyState.Chasing)
+            {
+                // Only handle visibility loss if sufficient time has passed since last seeing the player
+                if (Time.time - LastPlayerVisibleTime > PlayerVisibilityTimeout)
+                {
+                    LosePlayerVisibility();
                 }
             }
         }
