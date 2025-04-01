@@ -1,6 +1,5 @@
 using System;
 using System.Collections;
-using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.AI;
@@ -26,9 +25,6 @@ public class BasePatrolEnemy : BaseEnemy
     [SerializeField]
     private bool _showGizmos = true;
 
-    [SerializeField]
-    private Transform PatrolPointsParent;
-
     private int _currentPointIndex = 0;
     private bool _isReversing = false;
     private float _waitCounter;
@@ -45,13 +41,10 @@ public class BasePatrolEnemy : BaseEnemy
 
     private void FixedUpdate()
     {
-        // Only do patrol logic when we're actually in the patrolling state
-        // and not spotted, investigating, or wandering
         if (
-            _currentState == EnemyState.Patrolling
-            && !IsPlayerSpotted
-            && _patrolPoints != null
-            && _patrolPoints.Length > 0
+            !IsPlayerSpotted
+            && _currentState != EnemyState.Wandering
+            && _currentState != EnemyState.Investigating
         )
         {
             if (_waitCounter > 0)
@@ -73,26 +66,17 @@ public class BasePatrolEnemy : BaseEnemy
 
     private void PatrolLoopMethod()
     {
-        if (_patrolPoints.Length == 0)
-            return;
-
-        if (!Agent.pathPending && Agent.remainingDistance < 0.5f && Agent.enabled)
+        if (!Agent.pathPending && Agent.remainingDistance < 0.2f)
         {
             _currentPointIndex = (_currentPointIndex + 1) % _patrolPoints.Length;
-            if (_patrolPoints[_currentPointIndex] != null)
-            {
-                Agent.SetDestination(_patrolPoints[_currentPointIndex].position);
-                _waitCounter = _waitTime;
-            }
+            Agent.SetDestination(_patrolPoints[_currentPointIndex].position);
+            _waitCounter = _waitTime;
         }
     }
 
     private void PatrolBackAndForth()
     {
-        if (_patrolPoints.Length == 0)
-            return;
-
-        if (!Agent.pathPending && Agent.remainingDistance < 0.5f && Agent.enabled)
+        if (!Agent.pathPending && Agent.remainingDistance < 0.2f)
         {
             if (_currentPointIndex == 0)
             {
@@ -104,11 +88,8 @@ public class BasePatrolEnemy : BaseEnemy
             }
 
             _currentPointIndex = _isReversing ? _currentPointIndex - 1 : _currentPointIndex + 1;
-            if (_patrolPoints[_currentPointIndex] != null)
-            {
-                Agent.SetDestination(_patrolPoints[_currentPointIndex].position);
-                _waitCounter = _waitTime;
-            }
+            Agent.SetDestination(_patrolPoints[_currentPointIndex].position);
+            _waitCounter = _waitTime;
         }
     }
 
@@ -122,31 +103,37 @@ public class BasePatrolEnemy : BaseEnemy
         // Chase after the player if the player is spotted
         while (
             _currentState == EnemyState.Chasing
-            && Player != null
             && Vector3.Distance(transform.position, Player.transform.position) > 1f
         )
         {
             Agent.SetDestination(Player.transform.position);
             yield return null;
+
+            // If we've lost sight for too long, this will be handled in Update()
         }
 
         // If we've caught the player or state has changed, handle accordingly
         if (_currentState != EnemyState.Chasing)
         {
+            // State was changed elsewhere (likely in Update due to losing visibility)
+            // Let that logic handle the transition
             yield break;
         }
 
         // If we reached the player
-        if (Player != null && Vector3.Distance(transform.position, Player.transform.position) <= 1f)
+        if (Vector3.Distance(transform.position, Player.transform.position) <= 1f)
         {
+            // Handle reaching the player (attack, game over, etc.)
             Debug.Log("Caught the player!");
-            // Handle player caught logic here (game over, damage player, etc.)
         }
     }
 
     protected override void LosePlayerVisibility()
     {
         base.LosePlayerVisibility();
+
+        // After investigating, return to patrol
+        StartCoroutine(ReturnToPatrolAfterDelay(_investigationTime));
     }
 
     private IEnumerator ReturnToPatrolAfterDelay(float delay)
@@ -167,48 +154,17 @@ public class BasePatrolEnemy : BaseEnemy
 
         yield return base.OnSoundHeard(soundPosition);
 
-        // Move to sound position
         Agent.SetDestination(soundPosition);
-
-        // Wait until we reach the position or get close enough
-        while (
-            Vector3.Distance(transform.position, soundPosition) > 0.5f
-            && _currentState == EnemyState.Investigating
-        )
+        while (Vector3.Distance(transform.position, soundPosition) > 0.1f)
         {
             yield return null;
         }
 
-        // Only start wandering if we're still investigating (not chasing)
-        if (_currentState == EnemyState.Investigating)
-        {
-            // Use new wandering system
-            StartWandering(soundPosition, 5f);
-        }
+        // Use new wandering system
+        StartWandering(soundPosition, 5f);
 
-        // Wait for wandering to complete before returning to patrol
         yield return new WaitForSeconds(WanderTime);
-
-        // Only return to patrol if not in another higher priority state (like chasing)
-        if (_currentState == EnemyState.Wandering || _currentState == EnemyState.Investigating)
-        {
-            ResetPatrol();
-        }
-    }
-
-    public void UpdateRangerAlertLevel(AlertLevel alertLevel)
-    {
-        // Update the alert level of the ranger
-        if (alertLevel == AlertLevel.Suspicious)
-        {
-            CurrentAlertLevel = AlertLevel.Suspicious;
-            DetectionMeter = 0.5f;
-        }
-        else if (alertLevel == AlertLevel.Alert)
-        {
-            CurrentAlertLevel = AlertLevel.Alert;
-            DetectionMeter = 1f;
-        }
+        ResetPatrol();
     }
 
     public void FollowCitizen(GameObject citizen)
@@ -226,46 +182,15 @@ public class BasePatrolEnemy : BaseEnemy
         _currentState = EnemyState.Patrolling;
         IsPlayerSpotted = false;
 
-        if (_patrolPoints != null && _patrolPoints.Length > 0)
+        if (_patrolPoints.Length > 0)
         {
-            // Ensure _currentPointIndex is within bounds
-            if (_currentPointIndex >= _patrolPoints.Length)
+            if (_patrolLoop)
             {
-                _currentPointIndex = 0; // Reset to first point if out of bounds
+                PatrolLoopMethod();
             }
-
-            // Check if the patrol point exists and if we're far from it
-            if (
-                _patrolPoints[_currentPointIndex] != null
-                && Vector3.Distance(transform.position, _patrolPoints[_currentPointIndex].position)
-                    > 10f
-            )
+            else
             {
-                int closestPointIndex = 0;
-                float closestDistance = Mathf.Infinity;
-
-                for (int i = 0; i < _patrolPoints.Length; i++)
-                {
-                    if (_patrolPoints[i] == null)
-                        continue;
-
-                    float dist = Vector3.Distance(transform.position, _patrolPoints[i].position);
-                    if (dist < closestDistance)
-                    {
-                        closestDistance = dist;
-                        closestPointIndex = i;
-                    }
-                }
-
-                _currentPointIndex = closestPointIndex;
-            }
-
-            if (
-                _currentPointIndex < _patrolPoints.Length
-                && _patrolPoints[_currentPointIndex] != null
-            )
-            {
-                Agent.SetDestination(_patrolPoints[_currentPointIndex].position);
+                PatrolBackAndForth();
             }
         }
     }
@@ -366,35 +291,6 @@ public class BasePatrolEnemy : BaseEnemy
 
         if (isPlacingPoints)
         {
-            // Ensure we have a valid parent for patrol points
-            if (PatrolPointsParent == null)
-            {
-                // Create parent structure if it doesn't exist
-                GameObject globalPatrolPointsObject = GameObject.Find("GlobalPatrolPoints");
-                if (globalPatrolPointsObject == null)
-                {
-                    globalPatrolPointsObject = new GameObject("GlobalPatrolPoints");
-                }
-
-                string enemyParentName = gameObject.name + "Patrol";
-                GameObject enemyParentObject = GameObject.Find(enemyParentName);
-                if (enemyParentObject == null)
-                {
-                    enemyParentObject = new GameObject(enemyParentName);
-                    enemyParentObject.transform.SetParent(globalPatrolPointsObject.transform);
-                }
-
-                string patrolPointsName = gameObject.name + "PatrolPoints";
-                GameObject patrolPointsObject = GameObject.Find(patrolPointsName);
-                if (patrolPointsObject == null)
-                {
-                    patrolPointsObject = new GameObject(patrolPointsName);
-                    patrolPointsObject.transform.SetParent(enemyParentObject.transform);
-                }
-
-                PatrolPointsParent = patrolPointsObject.transform;
-            }
-
             SceneView.duringSceneGui += OnSceneGUI;
         }
 
@@ -447,5 +343,6 @@ public class BasePatrolEnemy : BaseEnemy
             e.Use();
         }
     }
+
 #endif
 }

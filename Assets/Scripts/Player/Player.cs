@@ -62,9 +62,6 @@ public class Player : MonoBehaviour
     private Vector3 _movementDirection = Vector3.zero;
     private bool _isMovingBackwards = false;
 
-    public bool IsStealthActive =>
-        InputManager.Instance.PlayerInput.Player.Stealth.ReadValue<float>() > 0;
-
     void Start()
     {
         _rb = GetComponent<Rigidbody>();
@@ -79,7 +76,9 @@ public class Player : MonoBehaviour
         ProcessInput();
         GenerateNoise();
         HandleObjectInteraction();
-        if (Input.GetKeyDown(KeyCode.V)) { }
+        if (Input.GetKeyDown(KeyCode.V))
+        {
+        }
         if (Input.GetKeyDown(KeyCode.Z))
         {
             Cursor.lockState = CursorLockMode.None;
@@ -94,161 +93,66 @@ public class Player : MonoBehaviour
 
     private void ProcessInput()
     {
-        // Get movement input values
-        Vector2 inputVector = InputManager.Instance.PlayerInput.Player.Move.ReadValue<Vector2>();
+        Vector2 movementInput = InputManager.Instance.PlayerInput.Player.Move.ReadValue<Vector2>();
+        _movementDirection = new Vector3(movementInput.x, 0, movementInput.y);
+        _movementDirection = Vector3.ClampMagnitude(_movementDirection, 1f);
+        _movementDirection = transform.TransformDirection(_movementDirection);
 
-        // Convert input to world space direction
-        Vector3 forward = Camera.main.transform.forward;
-        Vector3 right = Camera.main.transform.right;
+        _isMovingBackwards = movementInput.y < 0;
+        bool isMovingRight = movementInput.x > 0;
+        bool isMovingLeft = movementInput.x < 0;
 
-        // Ensure movement is on the horizontal plane
-        forward.y = 0f;
-        right.y = 0f;
-        forward.Normalize();
-        right.Normalize();
-
-        // Calculate movement direction
-        _movementDirection = forward * inputVector.y + right * inputVector.x;
-
-        // Check if moving backwards
-        _isMovingBackwards = inputVector.y < 0;
-
-        // Set speed based on movement state
-        float currentSpeed;
-
-        if (inputVector.magnitude > 0.1f)
+        float speed;
+        if (InputManager.Instance.PlayerInput.Player.Sprint.ReadValue<float>() > 0)
         {
-<<<<<<< Updated upstream
             speed = _runSpeed;
-            SetAnimationState(true, false, false, _isMovingBackwards, isMovingLeft, isMovingRight);
+            //SetAnimationState(true, false, false, _isMovingBackwards, isMovingLeft, isMovingRight);
         }
         else if (InputManager.Instance.PlayerInput.Player.Stealth.ReadValue<float>() > 0)
         {
             speed = _stealthSpeed;
-            SetAnimationState(false, true, false, _isMovingBackwards, isMovingLeft, isMovingRight);
+            //SetAnimationState(false, true, false, _isMovingBackwards, isMovingLeft, isMovingRight);
         }
         else
         {
             speed = _walkSpeed;
-            SetAnimationState(false, false, true, _isMovingBackwards, isMovingLeft, isMovingRight);
-=======
-            // Check sprint
-            if (InputManager.Instance.PlayerInput.Player.Sprint.ReadValue<float>() > 0)
-            {
-                currentSpeed = _runSpeed;
-                UpdateAnimationState(true, false, false);
-            }
-            // Check stealth
-            else if (InputManager.Instance.PlayerInput.Player.Stealth.ReadValue<float>() > 0)
-            {
-                currentSpeed = _stealthSpeed;
-                UpdateAnimationState(false, true, false);
-            }
-            // Normal walking
-            else
-            {
-                currentSpeed = _walkSpeed;
-                UpdateAnimationState(false, false, true);
-            }
-        }
-        else
-        {
-            // Not moving
-            currentSpeed = 0f;
-            UpdateAnimationState(false, false, false);
->>>>>>> Stashed changes
+            //SetAnimationState(false, false, true, _isMovingBackwards, isMovingLeft, isMovingRight);
         }
 
-        // Apply speed to movement direction
-        _movementDirection = _movementDirection.normalized * currentSpeed;
+        _movementDirection *= speed;
     }
 
     private void MovePlayer()
     {
-        // Preserve vertical velocity for gravity
-        Vector3 velocity = _movementDirection;
-        velocity.y = _rb.linearVelocity.y;
-        _rb.linearVelocity = velocity;
+        Vector3 targetPosition = _rb.position + _movementDirection * Time.fixedDeltaTime;
+        _rb.MovePosition(targetPosition);
 
-        // Rotate player to face movement direction
-        if (_movementDirection.magnitude > 0.1f)
+        // Only rotate to face movement direction when not moving backwards
+        if (_movementDirection != Vector3.zero && !_isMovingBackwards)
         {
-            Quaternion toRotation = Quaternion.LookRotation(_movementDirection, Vector3.up);
-            transform.rotation = Quaternion.Slerp(
-                transform.rotation,
-                toRotation,
-                _turnSpeed * Time.deltaTime
+            Quaternion targetRotation = Quaternion.LookRotation(_movementDirection);
+            _rb.rotation = Quaternion.Slerp(
+                _rb.rotation,
+                targetRotation,
+                Time.fixedDeltaTime * _turnSpeed
             );
         }
-    }
-
-    private void UpdateAnimationState(bool running, bool stealth, bool walking)
-    {
-        if (_animator == null)
-            return;
-
-        // Reset all animation states
-        _animator.SetBool("Run Forward", false);
-        _animator.SetBool("Run Backward", false);
-        _animator.SetBool("Running Left", false);
-        _animator.SetBool("Running Right", false);
-        _animator.SetBool("WalkingForward", false);
-        _animator.SetBool("WalkingBackward", false);
-
-        // Get directional input
-        Vector2 input = InputManager.Instance.PlayerInput.Player.Move.ReadValue<Vector2>();
-        bool isMovingLeft = input.x < -0.1f;
-        bool isMovingRight = input.x > 0.1f;
-
-        // Set appropriate animation state based on movement type
-        if (running)
+        // When moving backward, maintain forward orientation but allow sideways rotation
+        else if (_movementDirection != Vector3.zero && _isMovingBackwards)
         {
-            if (_isMovingBackwards)
+            Vector3 horizontalDirection = new Vector3(_movementDirection.x, 0, 0).normalized;
+            if (horizontalDirection != Vector3.zero)
             {
-<<<<<<< Updated upstream
                 Vector3 lookDirection = transform.forward;
                 lookDirection.x = horizontalDirection.x;
                 lookDirection = lookDirection.normalized;
-
+                
                 Quaternion targetRotation = Quaternion.LookRotation(lookDirection);
                 _rb.rotation = Quaternion.Slerp(
                     _rb.rotation,
                     targetRotation,
                     Time.fixedDeltaTime * _turnSpeed
                 );
-=======
-                _animator.SetBool("Run Backward", true);
-                if (isMovingLeft)
-                    _animator.SetBool("Run Backward Left", true);
-                if (isMovingRight)
-                    _animator.SetBool("Run Backward Right", true);
-            }
-            else
-            {
-                _animator.SetBool("Run Forward", true);
-                if (isMovingLeft)
-                    _animator.SetBool("Running Left", true);
-                if (isMovingRight)
-                    _animator.SetBool("Running Right", true);
-            }
-        }
-        else if (walking || stealth)
-        {
-            float speedMultiplier = stealth ? 0.5f : 1.0f;
-            _animator.SetFloat("SpeedMultiplier", speedMultiplier);
-
-            if (_isMovingBackwards)
-            {
-                _animator.SetBool("WalkingBackward", true);
-            }
-            else
-            {
-                _animator.SetBool("WalkingForward", true);
-                if (isMovingLeft)
-                    _animator.SetBool("Run Forward Left", true);
-                if (isMovingRight)
-                    _animator.SetBool("Run Forward Right", true);
->>>>>>> Stashed changes
             }
         }
     }
@@ -358,27 +262,29 @@ public class Player : MonoBehaviour
         }
     }
 
-    private void SetAnimationState(
-        bool running,
-        bool stealth,
-        bool walking,
-        bool backward,
-        bool left,
-        bool right
-    )
-    {
-        _animator.SetBool("Run Forward", running && !backward && !left && !right);
-        _animator.SetBool("Run Backward", running && backward);
-        _animator.SetBool("Running Left", running && left);
-        _animator.SetBool("Running Right", running && right);
+    // private void SetAnimationState(
+    //     bool running,
+    //     bool stealth,
+    //     bool walking,
+    //     bool backward,
+    //     bool left,
+    //     bool right
+    // )
+    // {
+    //     _animator.SetBool("Run Forward", running && !backward && !left && !right);
+    // {
+    //     _animator.SetBool("Run Forward", running && !backward && !left && !right);
+    //     _animator.SetBool("Run Backward", running && backward);
+    //     _animator.SetBool("Running Left", running && left);
+    //     _animator.SetBool("Running Right", running && right);
 
-        _animator.SetBool("WalkingForward", walking && !backward && !left && !right);
-        _animator.SetBool("WalkingBackward", walking && backward);
-        _animator.SetBool("Run Forward Left", walking && left);
-        _animator.SetBool("Run Forward Right", walking && right);
-        _animator.SetBool("Run Backward Left", walking && backward && left);
-        _animator.SetBool("Run Backward Right", walking && backward && right);
-    }
+    //     _animator.SetBool("WalkingForward", walking && !backward && !left && !right);
+    //     _animator.SetBool("WalkingBackward", walking && backward);
+    //     _animator.SetBool("Run Forward Left", walking && left);
+    //     _animator.SetBool("Run Forward Right", walking && right);
+    //     _animator.SetBool("Run Backward Left", walking && backward && left);
+    //     _animator.SetBool("Run Backward Right", walking && backward && right);
+    // }
 
     private void BearRoar()
     {
