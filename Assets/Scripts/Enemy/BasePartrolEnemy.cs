@@ -281,15 +281,15 @@ public class BasePatrolEnemy : BaseEnemy
     }
 
 #if UNITY_EDITOR
-    private bool isPlacingPoints = false;
+    private bool _isPlacingPatrolPoints = false; // New boolean for toggling patrol points placement
 
     [Button("Place Patrol Points"), Tab("Patrol")]
     public void TogglePlacePatrolPoints()
     {
-        isPlacingPoints = !isPlacingPoints;
+        _isPlacingPatrolPoints = !_isPlacingPatrolPoints; // Toggle the boolean
         SceneView.duringSceneGui -= OnSceneGUI;
 
-        if (isPlacingPoints)
+        if (_isPlacingPatrolPoints)
         {
             SceneView.duringSceneGui += OnSceneGUI;
         }
@@ -317,7 +317,7 @@ public class BasePatrolEnemy : BaseEnemy
     private void OnSceneGUI(SceneView sceneView)
     {
         Event e = Event.current;
-        if (e.type == EventType.MouseDown && e.button == 0 && isPlacingPoints)
+        if (e.type == EventType.MouseDown && e.button == 0 && _isPlacingPatrolPoints) // Use the new boolean
         {
             Ray ray = HandleUtility.GUIPointToWorldRay(e.mousePosition);
             if (Physics.Raycast(ray, out RaycastHit hit))
@@ -343,6 +343,5 @@ public class BasePatrolEnemy : BaseEnemy
             e.Use();
         }
     }
-
 #endif
 }
