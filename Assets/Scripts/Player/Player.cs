@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.SceneManagement;
 using VInspector;
 
 [
@@ -62,8 +63,18 @@ public class Player : MonoBehaviour
     private Vector3 _movementDirection = Vector3.zero;
     private bool _isMovingBackwards = false;
 
+    [Tab("Audio")]
+    private AudioSource _audioSource;
+
+    [SerializeField]
+    private AudioClip _bearRoarSound;
+
+    [SerializeField]
+    private AudioClip _caughtSound;
+
     void Start()
     {
+        _audioSource = GetComponent<AudioSource>();
         _rb = GetComponent<Rigidbody>();
         _animator = GetComponent<Animator>();
         Cursor.lockState = CursorLockMode.Locked;
@@ -76,9 +87,7 @@ public class Player : MonoBehaviour
         ProcessInput();
         GenerateNoise();
         HandleObjectInteraction();
-        if (Input.GetKeyDown(KeyCode.V))
-        {
-        }
+        if (Input.GetKeyDown(KeyCode.V)) { }
         if (Input.GetKeyDown(KeyCode.Z))
         {
             Cursor.lockState = CursorLockMode.None;
@@ -146,7 +155,7 @@ public class Player : MonoBehaviour
                 Vector3 lookDirection = transform.forward;
                 lookDirection.x = horizontalDirection.x;
                 lookDirection = lookDirection.normalized;
-                
+
                 Quaternion targetRotation = Quaternion.LookRotation(lookDirection);
                 _rb.rotation = Quaternion.Slerp(
                     _rb.rotation,
@@ -243,7 +252,6 @@ public class Player : MonoBehaviour
         if (_heldObject != null)
         {
             _heldObject.Drop();
-            // Generate noise based on object weight when dropped
             GenerateNoise(_heldObject.NoiseOnDrop);
             _heldObject = null;
             _isHoldingObject = false;
@@ -254,7 +262,6 @@ public class Player : MonoBehaviour
     {
         if (_heldObject != null)
         {
-            // Generate even more noise when throwing
             GenerateNoise(_heldObject.NoiseOnThrow);
             _heldObject.Throw(Camera.main.transform.forward * _throwForce);
             _heldObject = null;
@@ -262,33 +269,28 @@ public class Player : MonoBehaviour
         }
     }
 
-    // private void SetAnimationState(
-    //     bool running,
-    //     bool stealth,
-    //     bool walking,
-    //     bool backward,
-    //     bool left,
-    //     bool right
-    // )
-    // {
-    //     _animator.SetBool("Run Forward", running && !backward && !left && !right);
-    // {
-    //     _animator.SetBool("Run Forward", running && !backward && !left && !right);
-    //     _animator.SetBool("Run Backward", running && backward);
-    //     _animator.SetBool("Running Left", running && left);
-    //     _animator.SetBool("Running Right", running && right);
+    private void SetAnimationState(bool running, bool walking, bool backward, bool left, bool right)
+    {
+        _animator.SetBool("Run Forward", running && !backward && !left && !right);
+        {
+            _animator.SetBool("Run Forward", running && !backward && !left && !right);
+            _animator.SetBool("Run Backward", running && backward);
+            _animator.SetBool("Running Left", running && left);
+            _animator.SetBool("Running Right", running && right);
 
-    //     _animator.SetBool("WalkingForward", walking && !backward && !left && !right);
-    //     _animator.SetBool("WalkingBackward", walking && backward);
-    //     _animator.SetBool("Run Forward Left", walking && left);
-    //     _animator.SetBool("Run Forward Right", walking && right);
-    //     _animator.SetBool("Run Backward Left", walking && backward && left);
-    //     _animator.SetBool("Run Backward Right", walking && backward && right);
-    // }
+            _animator.SetBool("WalkingForward", walking && !backward && !left && !right);
+            _animator.SetBool("WalkingBackward", walking && backward);
+            _animator.SetBool("Run Forward Left", walking && left);
+            _animator.SetBool("Run Forward Right", walking && right);
+            _animator.SetBool("Run Backward Left", walking && backward && left);
+            _animator.SetBool("Run Backward Right", walking && backward && right);
+        }
+    }
 
     private void BearRoar()
     {
         GenerateNoise(100f);
+        _audioSource.PlayOneShot(_bearRoarSound);
     }
 
     private void Reset()
@@ -300,5 +302,14 @@ public class Player : MonoBehaviour
     private void SetUp()
     {
         InputManager.Instance.PlayerInput.Player.Roar.performed += ctx => BearRoar();
+    }
+
+    void OnCollisionEnter(Collision collision)
+    {
+        if (collision.gameObject.CompareTag("Enemy"))
+        {
+            _audioSource.PlayOneShot(_caughtSound);
+            SceneManager.LoadScene("Caught");
+        }
     }
 }
