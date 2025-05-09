@@ -21,22 +21,12 @@ public class AudioPreviewerWindow : EditorWindow
         public Color colorMiddle = new Color(0.4f, 0.9f, 0.4f, 1f);
         public Color colorEnd = new Color(1f, 0.6f, 0.2f, 1f);
 
-        private const int BaseWidth = 256;
-        private const int BaseHeight = 64;
-        private float scaleFactor = 1.0f;
-
-        public int width => Mathf.RoundToInt(BaseWidth * scaleFactor);
-        public int height => Mathf.RoundToInt(BaseHeight * scaleFactor);
-
-        public void UpdateScaleFactor(float windowWidth)
-        {
-            scaleFactor = Mathf.Clamp(windowWidth / 800f, 0.7f, 1.5f);
-        }
+        public int width = 256;
+        public int height = 64;
     }
 
     private WaveformSettings waveformSettings = new WaveformSettings();
     private Dictionary<AudioClip, Texture2D> waveformCache = new Dictionary<AudioClip, Texture2D>();
-    private Vector2 lastWindowSize;
     private Dictionary<AudioClip, float[]> clipSampleCache = new Dictionary<AudioClip, float[]>();
 
     private class FolderGroup
@@ -67,8 +57,6 @@ public class AudioPreviewerWindow : EditorWindow
     private void OnEnable()
     {
         autoLoadFromProject = EditorPrefs.GetBool(PrefsKeyAutoLoadFromProject, true);
-        lastWindowSize = position.size;
-        waveformSettings.UpdateScaleFactor(position.width);
         LoadSavedClips();
 
         if (autoLoadFromProject && clipDataList.Count == 0)
@@ -87,19 +75,6 @@ public class AudioPreviewerWindow : EditorWindow
 
     private void OnGUI()
     {
-        if (position.size != lastWindowSize)
-        {
-            waveformSettings.UpdateScaleFactor(position.width);
-            waveformCache.Clear();
-
-            foreach (var clipData in clipDataList)
-            {
-                clipData.waveformTexture = null;
-            }
-
-            lastWindowSize = position.size;
-        }
-
         GUILayout.Label("🎧 Audio Clip Previewer", EditorStyles.boldLabel);
 
         EditorGUILayout.BeginHorizontal();
